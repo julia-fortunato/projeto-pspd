@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package user;
+
+service User {
+  rpc CreateUsuario(CreateUserRequest) returns (CreateUserResponse){}
+  rpc UpdateScore(ScoreRequest) returns (ScoreResponse){}
+  rpc Login(LoginRequest) returns (LoginResponse){}
+  rpc ListByScore(ListRequest) returns(ListResponse){}
+}
+
+message LoginRequest {
+  string loginreq = 1;
+  string senhareq = 2;
+}
+
+message ListResponse {
+  repeated Usuario users = 1;
+}
+
+message LoginResponse {
+  string tokenrem = 1;
+}
+
+message Usuario {
+  string nome = 1;
+  string login = 2;
+  string rememberToken = 3;
+  string senha = 4;
+  int32 score = 5;
+}
+
+message CreateUserRequest {
+  Usuario usuario = 1;
+}
+
+message CreateUserResponse {
+  string rememberTokenRes = 1;
+}
+
+message ScoreRequest {
+  int32 scorenew = 1;
+  string remembertok = 2;
+}
+
+message ScoreResponse {
+}
+
+message ListRequest {
+}

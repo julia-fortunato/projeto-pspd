@@ -1,0 +1,13 @@
+version: "3.8"
+services:
+  db:
+    image: postgres:15
+    container_name: serverBpspd
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: serverB
+    volumes:
+      - ./BD/init:/docker-entrypoint-initdb.d:Z
+    ports:
+      - "5434:5432"

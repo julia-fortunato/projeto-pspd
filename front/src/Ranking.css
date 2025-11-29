@@ -1,0 +1,103 @@
+/* layout geral */
+.rk-wrap {
+  width: 100vw;
+  background: #fff;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  overflow: hidden;
+}
+.rk-card {
+  width: 60%;
+  max-width: 960px;
+  padding: 18px;
+  margin: 40px 16px 24px;
+}
+
+/* header */
+.rk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.rk-title { 
+  margin: 0;
+  margin-bottom: 4px;
+ }
+
+/* tabela com header sticky e scroll */
+.rk-table-wrap {
+  background: #fff;
+  border-radius: 12px;
+  color: #222;
+  border: 1px solid #eee;
+}
+.rk-table-wrap.scrollable {
+  max-height: 460px;
+  overflow: auto;          /* scroll no corpo */
+}
+
+/* TABELA */
+.rk-table {
+  width: 100%;
+  border-collapse: separate;   /* permite sticky */
+  border-spacing: 0;
+  table-layout: fixed;         /* fundamental p/ alinhar */
+  font-size: 0.96rem;
+}
+
+/* Colunas fixas */
+.col-pos   { width: 110px; }
+.col-score { width: 140px; }
+.col-user  { width: auto; }
+
+.rk-table thead th,
+.rk-table tbody td {
+  padding: 12px 14px;          /* mesmo padding em th/td */
+}
+
+.rk-table thead th {
+  position: sticky;
+  top: 0;
+  background: #222;
+  color: #fff;
+  z-index: 1;
+  text-align: left;
+  font-weight: 700;
+  border-bottom: 1px solid #e5e7eb;
+}
+.rk-table tbody td {
+  border-bottom: 1px solid #f2f2f2;
+}
+
+/* células por coluna (alinhamentos) */
+.cell-pos { text-align: left; }
+.cell-score, .col-score, .rk-table thead th:last-child { text-align: right; }
+
+/* badge de posição */
+.pos-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 84px;               /* largura fixa p/ não empurrar colunas */
+  height: 34px;
+  border-radius: 999px;
+  font-weight: 800;
+  border: 1px solid #eee;
+  background: #fff;
+  color: #222;
+}
+.pos-badge.gold   { background: linear-gradient(135deg, #fff3b0, #ffd166); border-color: #ffd166; }
+.pos-badge.silver { background: linear-gradient(135deg, #f0f0f0, #d1d5db); border-color: #cfd4dc; }
+.pos-badge.bronze { background: linear-gradient(135deg, #f1c9a9, #d08b5b); border-color: #d08b5b; }
+
+/* usuário/score */
+.rk-name { font-weight: 700; }
+.rk-score { font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* tabela compacta */
+.rk-table.compact td, .rk-table.compact th {
+  padding: 10px 12px;
+  font-size: 0.92rem;
+}

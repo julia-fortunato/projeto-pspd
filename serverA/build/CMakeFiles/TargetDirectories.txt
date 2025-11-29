@@ -1,0 +1,4 @@
+/home/julia/Documentos/PSPD/zip/serverA/build/CMakeFiles/quiz_proto_gen.dir
+/home/julia/Documentos/PSPD/zip/serverA/build/CMakeFiles/quiz_server.dir
+/home/julia/Documentos/PSPD/zip/serverA/build/CMakeFiles/edit_cache.dir
+/home/julia/Documentos/PSPD/zip/serverA/build/CMakeFiles/rebuild_cache.dir

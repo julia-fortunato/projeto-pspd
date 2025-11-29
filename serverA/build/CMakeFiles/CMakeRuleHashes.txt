@@ -1,0 +1,3 @@
+# Hashes of file build rules.
+6407850dd7607e2c4196e61b80a95710 CMakeFiles/quiz_proto_gen
+5adc06e8839a1d8b568484fb11890e3f quiz.pb.cc

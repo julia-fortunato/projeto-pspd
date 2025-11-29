@@ -1,0 +1,42 @@
+syntax = "proto3";
+
+package quiz;
+
+service Quiz {
+  rpc GetPerguntas (GetPerguntasRequest) returns (GetPerguntasResponse) {}
+  rpc CreatePergunta (CreateRequest) returns (CreateResponse) {}
+  rpc DeletePergunta (PerguntaId) returns (StatusRetorno) {}
+}
+
+message PerguntaId {
+  int32 dbid = 1;
+}
+
+message StatusRetorno {
+  int32 statusRet = 1;
+}
+
+message Pergunta {
+  int32 id = 1;
+  string texto = 2;
+  repeated string alternativas = 3;
+  int32 indice_resposta = 4;
+  string explicacao = 5;
+}
+
+message GetPerguntasRequest {
+}
+
+message GetPerguntasResponse {
+  repeated Pergunta perguntas = 1;
+}
+
+message CreateRequest {
+  repeated Pergunta pergunta_criar = 1;
+}
+
+message CreateResponse {
+  repeated Pergunta pergunta_criada = 1;
+}
+
+

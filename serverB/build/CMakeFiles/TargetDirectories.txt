@@ -1,0 +1,4 @@
+/home/julia/Documentos/PSPD/zip/serverB/build/CMakeFiles/user_proto_gen.dir
+/home/julia/Documentos/PSPD/zip/serverB/build/CMakeFiles/user_server.dir
+/home/julia/Documentos/PSPD/zip/serverB/build/CMakeFiles/edit_cache.dir
+/home/julia/Documentos/PSPD/zip/serverB/build/CMakeFiles/rebuild_cache.dir

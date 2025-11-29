@@ -1,0 +1,40 @@
+.tela {
+  width: 100vw;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #fff;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.cartao-inicial {
+  width: 100%;
+  max-width: 600px;
+  background: #222;
+  color: #fff;
+  border-radius: 16px;
+  padding: 20px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0,0,0,.12);
+  box-sizing: border-box;
+  margin-top: 170px;
+}
+
+.btn-reiniciar {
+  display: inline-block;
+  margin-top: 20px;
+  background: #fff;
+  color: #222;
+  border: 2px solid #222;
+  font-weight: 600;
+  border-radius: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.2s, color 0.2s;
+}
+.btn-reiniciar:hover {
+  background: #222;
+  color: #fff;
+}

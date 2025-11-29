@@ -1,0 +1,126 @@
+/* Container */
+.login-wrap {
+  width: 100vw;
+  background: #fff;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* Card */
+.cadastro-card {
+  width: 100%;
+  max-width: 420px;
+  background: #222;
+  color: #fff;
+  border-radius: 16px;
+  padding: 22px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.12);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 40px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: #222;
+  color: #fff;
+  border-radius: 16px;
+  padding: 22px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.12);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 70px;
+}
+
+.login-title {
+  margin: 0 0 8px 0;
+  color: #fff;
+}
+
+/* Inputs */
+.login-label {
+  font-size: 0.9rem;
+  color: #fff;
+  opacity: 0.9;
+}
+
+.login-input {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 2px solid #222;
+  background: #fff;
+  color: #222;
+  outline: none;
+}
+
+/* Buttons */
+.btn-login{
+  background: #fff;
+  color: #222;
+  border: 2px solid #222;
+  font-weight: 600;
+  transition: box-shadow 0.2s, transform 0.15s, background 0.2s, color 0.2s;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+  outline: none;
+  border-radius: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+  margin-top: 12px;
+}
+.btn:hover {
+  background: #fff;
+  color: #222;
+}
+
+.btn:active {
+  transform: scale(0.96);
+  box-shadow: 0 1px 4px rgba(128,0,128,0.18);
+}
+
+.btn.primary {
+  margin-top: 8px;
+}
+
+.btn.outline {
+  background: transparent;
+  color: #fff;
+  border-color: #fff;
+}
+
+/* REST x gRPC toggle */
+.login-toggle {
+  display: inline-flex;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.btn.active {
+  background: #222;
+  border-color: #222;
+}
+
+/* Messages */
+.msg {
+  margin: 6px 0 0;
+  font-size: 0.95rem;
+}
+.msg.ok { color: #d1fadf; }
+.msg.err { color: #fee2e2; }
+
+/* Links */
+.login-links {
+  margin-top: 8px;
+  color: #fff;
+}
+.login-links a {
+  color: #fff;
+  text-decoration: underline;
+}
+
+
