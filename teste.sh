@@ -1,303 +1,191 @@
 #!/usr/bin/env bash
+
+# O script unificado cria um cluster Kind multinó, constrói e implanta
+# os microsserviços (DBs, gRPC, Webserver) e instala o Prometheus/Grafana
+# para monitoramento do cluster.
+
 set -euo pipefail
+
+# ====================================================================
+# CONFIGURAÇÕES
+# ====================================================================
 
 CLUSTER_NAME="meucluster"
 KIND_CONFIG="kind-multinode.yaml"
+NAMESPACE="default"
 
-# ========================
-# 0) Verificações iniciais
-# ========================
-echo "[deploy] verificando dependências..."
+# Diretórios e Tags de Imagem (baseados no seu script Minikube)
+SERVER_A_DIR="./serverA"  # grpc-quiz
+SERVER_B_DIR="./serverB"  # grpc-user
+WEBSERVER_DIR="./webserver"
+IMG_A="grpc-quiz:v1"
+IMG_B="grpc-user:v1"
+IMG_WEB="webserver:1.2"
 
-command -v kind    >/dev/null || { echo "kind não encontrado";    exit 1; }
-command -v docker  >/dev/null || { echo "docker não encontrado";  exit 1; }
-command -v kubectl >/dev/null || { echo "kubectl não encontrado"; exit 1; }
-command -v helm    >/dev/null || { echo "helm não encontrado. Instale em: https://helm.sh/"; exit 1; }
+# Lista de Manifestos de Aplicação
+# CORREÇÃO: Limpeza de caracteres invisíveis (non-breaking spaces)
+MANIFESTS=(
+"kubernetes/01-db-quiz-deployment.yaml"
+"kubernetes/03-app-quiz-deployment.yaml"
+"kubernetes/02-db-user-deployment.yaml"
+"kubernetes/04-app-user-deployment.yaml"
+"kubernetes/webserver-app.yaml"
+)
 
-echo "[deploy] criando arquivo de configuração KIND..."
+# Lista de Deployments para aguardar o Rollout
+# CORREÇÃO: Limpeza de caracteres invisíveis (non-breaking spaces)
+DEPLOYMENTS=(
+"postgres-quiz-deployment"
+"grpc-quiz-deployment"
+"postgres-user-deployment"
+"grpc-user-deployment"
+"webserver-deployment"
+)
 
+# Array para armazenar nomes de imagens para carregamento no Kind
+declare -a IMAGES_TO_LOAD=("$IMG_A" "$IMG_B" "$IMG_WEB")
+
+# ====================================================================
+# 1) PREPARAR E CRIAR O CLUSTER KIND MULTINÓ
+# ====================================================================
+
+echo "[KIND] Criando arquivo de cluster multinode..."
+# CORREÇÃO: Garante que a indentação use APENAS espaços, evitando caracteres
+# invisíveis (como o \u00a0) que quebram o parser YAML do Kind.
 cat <<EOF > "$KIND_CONFIG"
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
+
 nodes:
   - role: control-plane
   - role: worker
   - role: worker
 EOF
 
-echo "[deploy] verificando se o cluster KIND já existe…"
+echo "[KIND] Criando cluster ($CLUSTER_NAME) com 3 nós..."
+kind delete cluster --name "$CLUSTER_NAME" || true
+kind create cluster --name "$CLUSTER_NAME" --config "$KIND_CONFIG"
 
-if kind get clusters | grep -q "^${CLUSTER_NAME}\$"; then
-    echo "[deploy] cluster '${CLUSTER_NAME}' já existe. Usando ele."
-else
-    echo "[deploy] criando cluster multinode REAL '${CLUSTER_NAME}'…"
-    kind create cluster --name "$CLUSTER_NAME" --config "$KIND_CONFIG"
-fi
-
-echo "[deploy] esperando nós ficarem prontos…"
+echo "[K8S] Aguardando nós ficarem prontos..."
 kubectl wait --for=condition=Ready node --all --timeout=120s
-kubectl get nodes -o wide
 
-echo "[deploy] cluster KIND OK! 🚀"
+# ====================================================================
+# 2) BUILD E CARREGAMENTO DAS IMAGENS DA APLICAÇÃO
+# ====================================================================
 
+echo "[DEPLOY] Configurando docker-env local (não Minikube) para build..."
+# O build será feito no ambiente local/host, não no Kind
 
-# ========================
-# 1) Variáveis gerais e Namespace App
-# ========================
-NAMESPACE="default"
-MONITORING_NS="monitoring"
+echo "[DEPLOY] build ${IMG_A}..."
+docker build -t "${IMG_A}" "${SERVER_A_DIR}"
 
-SERVER_A_DIR="./serverA"
-SERVER_B_DIR="./serverB"
-WEBSERVER_DIR="./webserver"
+echo "[DEPLOY] build ${IMG_B}..."
+docker build -t "${IMG_B}" "${SERVER_B_DIR}"
 
-IMG_A="grpc-quiz:v1"
-IMG_B="grpc-user:v1"
-IMG_WEB="webserver:1.2"
+echo "[DEPLOY] build ${IMG_WEB}..."
+docker build -t "${IMG_WEB}" "${WEBSERVER_DIR}"
 
-MANIFESTS=(
-  "kubernetes/01-db-quiz-deployment.yaml"
-  "kubernetes/03-app-quiz-deployment.yaml"
-  "kubernetes/02-db-user-deployment.yaml"
-  "kubernetes/04-app-user-deployment.yaml"
-  "kubernetes/webserver-app.yaml"
-)
+echo "[KIND] Carregando imagens no cluster Kind (crucial para multinó)..."
+# O Kind precisa que as imagens sejam explicitamente carregadas nos nós
+for img in "${IMAGES_TO_LOAD[@]}"; do
+ echo " -> Carregando imagem: $img"
+ kind load docker-image "$img" --name "$CLUSTER_NAME"
+done
 
-DEPLOYMENTS=(
-  "postgres-quiz-deployment"
-  "grpc-quiz-deployment"
-  "postgres-user-deployment"
-  "grpc-user-deployment"
-  "webserver-deployment"
-)
+# ====================================================================
+# 3) DEPLOY DA APLICAÇÃO (ConfigMaps, Manifests e Rollouts)
+# ====================================================================
 
-echo "[deploy] criando namespace da aplicação..."
+echo "[DEPLOY] Criando namespace se necessário: $NAMESPACE"
 kubectl get ns "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
-
-# ========================
-# 1.5) [PROMETHEUS] Instalação da Stack de Monitoramento
-# ========================
-echo "----------------------------------------------------"
-echo "[deploy] Iniciando configuração do Prometheus/Grafana..."
-
-# Criar namespace de monitoramento
-kubectl get ns "$MONITORING_NS" >/dev/null 2>&1 || kubectl create namespace "$MONITORING_NS"
-
-# Adicionar repo do prometheus community se não existir
-if ! helm repo list | grep -q "prometheus-community"; then
-    echo "[deploy] adicionando helm repo prometheus-community..."
-    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-    helm repo update
-fi
-
-# LIMPEZA DE SEGURANÇA
-if helm status prometheus-stack -n "$MONITORING_NS" >/dev/null 2>&1; then
-    echo "[deploy] Instalação anterior detectada. Removendo para garantir uma instalação limpa..."
-    helm uninstall prometheus-stack -n "$MONITORING_NS" --wait || true
-    echo "[deploy] Forçando remoção de pods antigos..."
-    kubectl delete pods --all -n "$MONITORING_NS" --force --grace-period=0 2>/dev/null || true
-    sleep 5
-fi
-
-echo "[deploy] instalando/atualizando kube-prometheus-stack (Otimizado para Kind)..."
-
-# --- CORREÇÃO DEFINITIVA ---
-# 1. Control Plane desabilitado (etcd/scheduler/controller).
-# 2. NodeExporter DESABILITADO (nodeExporter.enabled=false). Ele é o culpado pelo travamento.
-helm upgrade --install prometheus-stack prometheus-community/kube-prometheus-stack \
-  --namespace "$MONITORING_NS" \
-  --create-namespace \
-  --set grafana.adminPassword="admin" \
-  --set kubeEtcd.enabled=false \
-  --set kubeControllerManager.enabled=false \
-  --set kubeScheduler.enabled=false \
-  --set nodeExporter.enabled=false \
-  --wait --timeout 600s
-
-echo "[deploy] Prometheus Stack instalada com sucesso!"
-echo "----------------------------------------------------"
-
-
-# ========================
-# 2) ConfigMaps do SQL
-# ========================
+# ConfigMaps
 if [ -d "BD/quiz" ]; then
-  echo "[deploy] atualizando ConfigMap quiz-sql-config…"
-  kubectl create configmap quiz-sql-config \
-    --from-file=BD/quiz/ \
-    -n "$NAMESPACE" -o yaml --dry-run=client | kubectl apply -f -
+ echo "[DEPLOY] Atualizando ConfigMap quiz-sql-config..."
+ kubectl create configmap quiz-sql-config --from-file=BD/quiz/ -n "$NAMESPACE" -o yaml --dry-run=client | kubectl apply -f -
 else
-  echo "[deploy] [AVISO] Pasta BD/quiz não encontrada."
+ echo "[DEPLOY] (Aviso) Pasta BD/quiz não encontrada. ConfigMap quiz-sql-config ignorado."
 fi
 
 if [ -d "BD/user" ]; then
-  echo "[deploy] atualizando ConfigMap user-sql-config…"
-  kubectl create configmap user-sql-config \
-    --from-file=BD/user/ \
-    -n "$NAMESPACE" -o yaml --dry-run=client | kubectl apply -f -
+ echo "[DEPLOY] Atualizando ConfigMap user-sql-config..."
+ kubectl create configmap user-sql-config --from-file=BD/user/ -n "$NAMESPACE" -o yaml --dry-run=client | kubectl apply -f -
 else
-  echo "[deploy] [AVISO] Pasta BD/user não encontrada."
+ echo "[DEPLOY] (Aviso) Pasta BD/user não encontrada. ConfigMap user-sql-config ignorado."
 fi
 
-
-# ========================
-# 3) Build das imagens e carregar no KIND
-# ========================
-echo "[deploy] docker build local…"
-
-docker build -t "${IMG_A}"   "${SERVER_A_DIR}"
-docker build -t "${IMG_B}"   "${SERVER_B_DIR}"
-docker build -t "${IMG_WEB}" "${WEBSERVER_DIR}"
-
-echo "[deploy] carregando imagens para dentro do cluster KIND…"
-kind load docker-image "${IMG_A}"   --name "$CLUSTER_NAME"
-kind load docker-image "${IMG_B}"   --name "$CLUSTER_NAME"
-kind load docker-image "${IMG_WEB}" --name "$CLUSTER_NAME"
-
-
-# ========================
-# 4) Aplicar manifests
-# ========================
-echo "[deploy] aplicando manifests da aplicação..."
-
+# Aplicar Manifests
+echo "[DEPLOY] Aplicando manifestos da aplicação..."
 for f in "${MANIFESTS[@]}"; do
-  [ -f "$f" ] || { echo "[erro] manifesto não encontrado: $f"; exit 1; }
-  echo "[deploy] kubectl apply $f…"
-  kubectl apply -n "$NAMESPACE" -f "$f"
+ [ -f "$f" ] || { echo "[ERRO] Manifesto não encontrado: $f"; exit 1; }
+ echo " -> Aplicando $f…"
+ kubectl apply -n "$NAMESPACE" -f "$f"
 done
 
-
-# ========================
-# 5) Esperar deployments
-# ========================
-echo "[deploy] aguardando rollouts da aplicação..."
-
+# Esperar Rollouts
+echo "[DEPLOY] Aguardando rollouts dos Deployments..."
 for d in "${DEPLOYMENTS[@]}"; do
-  echo "[deploy] aguardando $d…"
-  kubectl rollout status -n "$NAMESPACE" deployment/"$d" --timeout=180s
+ echo " -> Aguardando rollout de $d…"
+ kubectl rollout status -n "$NAMESPACE" deployment/"$d" --timeout=180s
 done
 
+echo "[DEPLOY] Aplicações prontas!"
 
-# ========================
-# 6) Forçar reinit se tabelas SQL faltarem
-# ========================
-echo "[deploy] verificando tabelas (tentativa segura)..."
+# ====================================================================
+# 4) INSTALAR KUBE-PROMETHEUS-STACK (MONITORAMENTO)
+# ====================================================================
 
-check_tables() {
-  local label="$1"
-  local pod
-  pod=$(kubectl get pod -n "$NAMESPACE" -l "app=${label}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-  if [ -z "$pod" ]; then
-    echo "0"
-    return
-  fi
+echo "[PROMETHEUS] Instalando kube-prometheus-stack..."
 
-  if kubectl exec -n "$NAMESPACE" "$pod" -- bash -c "pg_isready -q"; then
-    if kubectl exec -n "$NAMESPACE" "$pod" -- psql -U postgres -d postgres -c '\dt' >/dev/null 2>&1; then
-      echo "1"
-    else
-      echo "0"
-    fi
-  else
-    echo "0"
-  fi
-}
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1
+helm repo update >/dev/null
 
-HAS_USUARIO=$(check_tables "postgres-user")
-HAS_QUIZ=$(check_tables "postgres-quiz")
+helm install monitoring prometheus-community/kube-prometheus-stack \
+ --namespace monitoring --create-namespace \
+ --set grafana.enabled=true \
+ --set prometheus.enabled=true \
+ --set alertmanager.enabled=true \
+ --wait
 
-if [ "$HAS_USUARIO" -eq 0 ] || [ "$HAS_QUIZ" -eq 0 ]; then
-  echo "[deploy] tabelas ausentes! Forçando reinit dos pods…"
+echo "[PROMETHEUS] Aguardando componentes de monitoramento..."
+# Componentes principais (Deployments)
+kubectl rollout status deploy/monitoring-grafana -n monitoring --timeout=180s
+kubectl rollout status deploy/monitoring-kube-prometheus-operator -n monitoring --timeout=180s
 
-  kubectl delete pod -n "$NAMESPACE" -l app=postgres-user --ignore-not-found
-  kubectl delete pod -n "$NAMESPACE" -l app=postgres-quiz --ignore-not-found
-
-  kubectl rollout status -n "$NAMESPACE" deployment/postgres-user-deployment --timeout=180s
-  kubectl rollout status -n "$NAMESPACE" deployment/postgres-quiz-deployment --timeout=180s
-fi
+# CORREÇÃO DE NOME: Prometheus e Alertmanager são StatefulSets com nomes específicos.
+kubectl rollout status statefulset/monitoring-prometheus-kube-prometheus -n monitoring --timeout=180s
+kubectl rollout status statefulset/monitoring-alertmanager -n monitoring --timeout=180s
 
 
-# ========================
-# 7) Serviços e exposição externa
-# ========================
-echo "----------------------------------------------------"
-echo "[deploy] Configurando acesso externo..."
-
-# -- Função IP Host --
-get_host_ip() {
-  for ip in $(hostname -I); do
-    if [[ "$ip" =~ ^192\.168\. ]] || [[ "$ip" =~ ^10\. ]] || ([[ "$ip" =~ ^172\. ]] && ! [[ "$ip" =~ ^172\.1[6-9]\. ]] ); then
-      echo "$ip"
-      return
-    fi
-  done
-  for ip in $(hostname -I); do
-    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-      echo "$ip"
-      return
-    fi
-  done
-  echo "127.0.0.1"
-}
-HOST_IP=$(get_host_ip)
-
-# --- Exposição Webserver ---
-if ! kubectl get svc webserver-service -n "$NAMESPACE" >/dev/null 2>&1; then
-  echo "[erro] webserver-service não encontrado."
-else
-  NODE_PORT_WEB=$(kubectl get svc webserver-service -n "$NAMESPACE" -o jsonpath='{.spec.ports[0].nodePort}')
-  TARGET_PORT_WEB=$(kubectl get svc webserver-service -n "$NAMESPACE" -o jsonpath='{.spec.ports[0].port}')
-  
-  # Limpar anterior
-  pkill -f "kubectl port-forward .*webserver-service" >/dev/null 2>&1 || true
-  
-  # Forward na porta do NodePort ou 8080
-  LOCAL_PORT_WEB="$NODE_PORT_WEB"
-  echo "[deploy] Expondo Webserver na porta $LOCAL_PORT_WEB..."
-  
-  kubectl port-forward --address 0.0.0.0 svc/webserver-service "${LOCAL_PORT_WEB}:${TARGET_PORT_WEB}" -n "$NAMESPACE" >/dev/null 2>&1 &
-  PF_WEB_PID=$!
-fi
-
-# --- Exposição Grafana [PROMETHEUS] ---
-GRAFANA_SVC="prometheus-stack-grafana"
-LOCAL_PORT_GRAFANA=3000
-
-echo "[deploy] Verificando serviço Grafana..."
-# Aguarda o pod estar running primeiro para evitar falha no port-forward
-kubectl wait --namespace "$MONITORING_NS" --for=condition=ready pod --selector=app.kubernetes.io/name=grafana --timeout=300s
-
-echo "[deploy] Expondo Grafana na porta $LOCAL_PORT_GRAFANA..."
-pkill -f "kubectl port-forward .*$GRAFANA_SVC" >/dev/null 2>&1 || true
-
-kubectl port-forward --address 0.0.0.0 -n "$MONITORING_NS" svc/$GRAFANA_SVC "${LOCAL_PORT_GRAFANA}:80" >/dev/null 2>&1 &
-PF_GRAFANA_PID=$!
-
-
-# ========================
-# 8) Resumo Final
-# ========================
-sleep 3 # Estabilizar forwards
+# ====================================================================
+# 5) MOSTRAR STATUS E COMO ACESSAR
+# ====================================================================
 
 echo ""
-echo "========================================================"
-echo "DEPLOY CONCLUÍDO COM SUCESSO! 🚀"
-echo "========================================================"
-echo ""
-echo "📱 Aplicação Web:"
-echo "   URL: http://${HOST_IP}:${LOCAL_PORT_WEB}"
-echo ""
-echo "📊 Monitoramento (Grafana):"
-echo "   URL: http://${HOST_IP}:${LOCAL_PORT_GRAFANA}"
-echo "   Usuário: admin"
-echo "   Senha:   admin"
-echo ""
-echo "Observações:"
-echo " - PIDs dos Port-Forwards: Web ($PF_WEB_PID), Grafana ($PF_GRAFANA_PID)"
-echo " - Para parar, rode: kill $PF_WEB_PID $PF_GRAFANA_PID"
-echo ""
+echo "======================================================"
+echo "🚀 DEPLOY E MONITORAMENTO CONCLUÍDOS!"
+echo "======================================================"
 
-# Salvar PIDs
-echo "$PF_WEB_PID" > /tmp/webserver-pf.pid
-echo "$PF_GRAFANA_PID" > /tmp/grafana-pf.pid
+echo "[DEPLOY] Serviços da Aplicação:"
+kubectl get svc -n "$NAMESPACE"
+
+echo ""
+echo "📈 Para acessar o Prometheus (Port-Forwarding):"
+echo " kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090"
+echo " → Acesse: http://localhost:9090"
+
+echo ""
+echo "📊 Para acessar o Grafana (Port-Forwarding):"
+echo " kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80"
+echo " → Acesse: http://localhost:3000"
+echo " user: admin"
+echo " senha (pegar com):"
+echo "   kubectl get secret -n monitoring monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d"
+echo ""
+echo "Lembre-se: O Prometheus está monitorando apenas o CLUSTER por enquanto."
+echo "Para monitorar suas APPs, você precisa criar recursos ServiceMonitor!"
+
+echo "======================================================"
+
+# Nota: O passo 8 do seu script Minikube foi removido, pois depende de variáveis (HAS_USUARIO, HAS_QUIZ)
+# não definidas e logicaamente complexas em um ambiente de deploy simples.
