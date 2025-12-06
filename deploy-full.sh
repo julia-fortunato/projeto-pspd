@@ -82,7 +82,7 @@ helm install monitoring prometheus-community/kube-prometheus-stack \
 echo "[PROMETHEUS] Aguardando componentes..."
 kubectl rollout status deploy/monitoring-grafana -n monitoring --timeout=180s
 kubectl rollout status deploy/monitoring-kube-prometheus-operator -n monitoring --timeout=180s
-kubectl rollout status deploy/monitoring-kube-prometheus-prometheus -n monitoring --timeout=180s
+kubectl rollout status statefulset/prometheus-monitoring-kube-prometheus-prometheus -n monitoring --timeout=180s
 
 
 #############################################
@@ -144,7 +144,29 @@ done
 
 
 #############################################
-# 8) RESULTADOS / ACESSOS
+# 8) PORT-FORWARD PARA ACESSO LOCAL
+#############################################
+
+echo "[PORT-FORWARD] Iniciando túneis locais para Grafana, Prometheus e Webserver..."
+
+# Grafana
+kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80 >/dev/null 2>&1 &
+PF_GRAFANA_PID=$!
+
+# Prometheus
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090 >/dev/null 2>&1 &
+PF_PROM_PID=$!
+
+# Webserver
+kubectl port-forward -n "$NAMESPACE" svc/webserver-service 8080:80 >/dev/null 2>&1 &
+PF_WEB_PID=$!
+
+# Dá um tempinho pros port-forwards subirem
+sleep 3
+
+
+#############################################
+# 9) RESULTADOS / ACESSOS
 #############################################
 
 echo ""
@@ -152,21 +174,25 @@ echo "==========================================="
 echo "🚀 SISTEMA TOTALMENTE DEPLOYADO!"
 echo "==========================================="
 echo ""
-echo "📊 Acessar Grafana:"
-echo "  kubectl port-forward -n monitoring svc/monitoring-grafana 3000:80"
-echo "  → http://localhost:3000"
+echo "📊 Grafana (port-forward já ativo)"
+echo "  URL:  http://localhost:3000"
+echo "  PID do port-forward: $PF_GRAFANA_PID"
 echo ""
 echo "  user: admin"
 echo "  senha:"
 echo "    kubectl get secret -n monitoring monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d"
 echo ""
-echo "📈 Acessar Prometheus:"
-echo "  kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090"
-echo "  → http://localhost:9090"
+echo "📈 Prometheus (port-forward já ativo)"
+echo "  URL:  http://localhost:9090"
+echo "  PID do port-forward: $PF_PROM_PID"
 echo ""
-echo "🌐 Acessar Webserver:"
-echo "  kubectl port-forward svc/webserver-service -n default 8080:80"
-echo "  → http://localhost:8080"
+echo "🌐 Webserver (port-forward já ativo)"
+echo "  URL:  http://localhost:8080"
+echo "  PID do port-forward: $PF_WEB_PID"
+echo ""
+echo "👉 Para encerrar os port-forwards, use:"
+echo "  kill $PF_GRAFANA_PID $PF_PROM_PID $PF_WEB_PID"
 echo ""
 echo "Todos os serviços rodando no cluster KIND + monitoramento ativo."
 echo "==========================================="
+
