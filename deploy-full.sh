@@ -157,8 +157,8 @@ PF_GRAFANA_PID=$!
 kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090 >/dev/null 2>&1 &
 PF_PROM_PID=$!
 
-# Webserver
-kubectl port-forward -n "$NAMESPACE" svc/webserver-service 8080:80 >/dev/null 2>&1 &
+# Webserver (Service porta 6969 -> localhost:8080)
+kubectl port-forward -n "$NAMESPACE" svc/webserver-service 8080:6969 >/dev/null 2>&1 &
 PF_WEB_PID=$!
 
 # Dá um tempinho pros port-forwards subirem
