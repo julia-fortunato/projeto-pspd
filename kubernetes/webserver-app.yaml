@@ -13,6 +13,11 @@ spec:
       labels:
         app: webserver
     spec:
+
+      # 👇 Força o Pod a rodar no nó de control-plane
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+
       containers:
       - name: webserver
         image: webserver:1.2

@@ -65,6 +65,20 @@ kubectl wait --for=condition=Ready node --all --timeout=120s
 
 
 #############################################
+# 2.1) REMOVER TAINT DO CONTROL-PLANE
+#   → deixa o nó de control-plane também receber pods
+#############################################
+
+echo "[K8S] Removendo taint do control-plane para permitir workloads..."
+
+# Remove taint padrão de control-plane (k8s recentes)
+kubectl taint nodes -l node-role.kubernetes.io/control-plane='' node-role.kubernetes.io/control-plane- || true
+
+# Remove taint antigo (master), se existir (clusters mais antigos)
+kubectl taint nodes -l node-role.kubernetes.io/master='' node-role.kubernetes.io/master- || true
+
+
+#############################################
 # 3) INSTALAR kube-prometheus-stack
 #############################################
 
@@ -149,7 +163,7 @@ done
 
 echo "[PORT-FORWARD] Iniciando túneis locais para Grafana, Prometheus e Webserver..."
 
-# Grafana
+# Grafana (localhost:3535 → svc porta 80)
 kubectl port-forward -n monitoring svc/monitoring-grafana 3535:80 >/dev/null 2>&1 &
 PF_GRAFANA_PID=$!
 
@@ -175,7 +189,7 @@ echo "🚀 SISTEMA TOTALMENTE DEPLOYADO!"
 echo "==========================================="
 echo ""
 echo "📊 Grafana (port-forward já ativo)"
-echo "  URL:  http://localhost:3000"
+echo "  URL:  http://localhost:3535"
 echo "  PID do port-forward: $PF_GRAFANA_PID"
 echo ""
 echo "  user: admin"
@@ -195,4 +209,3 @@ echo "  kill $PF_GRAFANA_PID $PF_PROM_PID $PF_WEB_PID"
 echo ""
 echo "Todos os serviços rodando no cluster KIND + monitoramento ativo."
 echo "==========================================="
-
