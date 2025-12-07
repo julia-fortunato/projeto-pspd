@@ -1,5 +1,0 @@
-Method,Name,Error,Occurrences
-POST,Login,CatchResponseError('Falha ao fazer login: 0 '),20
-GET,GetQuiz,"ConnectionRefusedError(111, 'Connection refused')",21
-POST,CreateUser,CatchResponseError('Falha ao criar usuário: 0 '),20
-POST,CreatePergunta,"ConnectionRefusedError(111, 'Connection refused')",3
