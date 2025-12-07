@@ -1,9 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-#############################################
-# CONFIGURAÇÕES
-#############################################
+
 
 CLUSTER_NAME="meucluster"
 KIND_CONFIG="kind-multinode.yaml"
@@ -34,11 +32,6 @@ DEPLOYMENTS=(
 )
 
 
-#############################################
-# 1) CRIAR CLUSTER KIND MULTINODE
-#############################################
-
-echo "[KIND] Criando arquivo de cluster..."
 cat <<EOF > "$KIND_CONFIG"
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
@@ -49,40 +42,34 @@ nodes:
   - role: worker
 EOF
 
-echo "[KIND] Resetando cluster anterior..."
+
 kind delete cluster --name "$CLUSTER_NAME" || true
 
-echo "[KIND] Criando novo cluster..."
+
 kind create cluster --name "$CLUSTER_NAME" --config "$KIND_CONFIG"
 
 
-#############################################
-# 2) ESPERAR CLUSTER FICAR PRONTO
-#############################################
 
-echo "[K8S] Aguardando nós prontos..."
+
+
 kubectl wait --for=condition=Ready node --all --timeout=120s
 
 
-#############################################
-# 2.1) REMOVER TAINT DO CONTROL-PLANE
-#   → deixa o nó de control-plane também receber pods
-#############################################
 
-echo "[K8S] Removendo taint do control-plane para permitir workloads..."
 
-# Remove taint padrão de control-plane (k8s recentes)
+
+
+
+
 kubectl taint nodes -l node-role.kubernetes.io/control-plane='' node-role.kubernetes.io/control-plane- || true
 
-# Remove taint antigo (master), se existir (clusters mais antigos)
+
 kubectl taint nodes -l node-role.kubernetes.io/master='' node-role.kubernetes.io/master- || true
 
 
-#############################################
-# 3) INSTALAR kube-prometheus-stack
-#############################################
 
-echo "[PROMETHEUS] Instalando monitoring stack..."
+
+
 helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null
 helm repo update >/dev/null
 
@@ -93,20 +80,18 @@ helm install monitoring prometheus-community/kube-prometheus-stack \
   --set alertmanager.enabled=true \
   --wait
 
-echo "[PROMETHEUS] Aguardando componentes..."
+
 kubectl rollout status deploy/monitoring-grafana -n monitoring --timeout=180s
 kubectl rollout status deploy/monitoring-kube-prometheus-operator -n monitoring --timeout=180s
 kubectl rollout status statefulset/prometheus-monitoring-kube-prometheus-prometheus -n monitoring --timeout=180s
 
 
-#############################################
-# 4) PREPARAR NAMESPACE / CONFIGMAPS SQL
-#############################################
 
-echo "[APP] Criando namespace..."
+
+
 kubectl get ns "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
-echo "[APP] Criando configmaps SQL..."
+
 
 kubectl create configmap quiz-sql-config \
   --from-file=BD/quiz/ -n "$NAMESPACE" \
@@ -117,78 +102,68 @@ kubectl create configmap user-sql-config \
   -o yaml --dry-run=client | kubectl apply -f -
 
 
-#############################################
-# 5) BUILD E LOAD DAS IMAGENS NO KIND
-#############################################
 
-echo "[DOCKER] Buildando imagens..."
+
+
 
 docker build -t "$IMG_A" "$SERVER_A_DIR"
 docker build -t "$IMG_B" "$SERVER_B_DIR"
 docker build -t "$IMG_WEB" "$WEBSERVER_DIR"
 
-echo "[KIND] Carregando imagens..."
+
 
 kind load docker-image "$IMG_A" --name "$CLUSTER_NAME"
 kind load docker-image "$IMG_B" --name "$CLUSTER_NAME"
 kind load docker-image "$IMG_WEB" --name "$CLUSTER_NAME"
 
 
-#############################################
-# 6) APLICAR MANIFESTOS
-#############################################
 
-echo "[KUBECTL] Aplicando manifests..."
+
+
 
 for f in "${MANIFESTS[@]}"; do
-  echo "[apply] $f"
+  
   kubectl apply -f "$f" -n "$NAMESPACE"
 done
 
 
-#############################################
-# 7) ESPERAR ROLLOUT COMPLETAR
-#############################################
 
-echo "[KUBECTL] Esperando rollouts..."
+
+
 
 for d in "${DEPLOYMENTS[@]}"; do
   kubectl rollout status deployment/"$d" -n "$NAMESPACE" --timeout=180s
 done
 
 
-#############################################
-# 8) PORT-FORWARD PARA ACESSO LOCAL
-#############################################
 
-echo "[PORT-FORWARD] Iniciando túneis locais para Grafana, Prometheus e Webserver..."
 
-# Grafana (localhost:3535 → svc porta 80)
+
+
+
 kubectl port-forward -n monitoring svc/monitoring-grafana 3535:80 >/dev/null 2>&1 &
 PF_GRAFANA_PID=$!
 
-# Prometheus
+
 kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090 >/dev/null 2>&1 &
 PF_PROM_PID=$!
 
-# Webserver (Service porta 6969 -> localhost:8080)
+
 kubectl port-forward -n "$NAMESPACE" svc/webserver-service 8080:6969 >/dev/null 2>&1 &
 PF_WEB_PID=$!
 
-# Dá um tempinho pros port-forwards subirem
+
 sleep 3
 
 
-#############################################
-# 9) RESULTADOS / ACESSOS
-#############################################
 
-echo ""
-echo "==========================================="
-echo "🚀 SISTEMA TOTALMENTE DEPLOYADO!"
-echo "==========================================="
-echo ""
-echo "📊 Grafana (port-forward já ativo)"
+
+
+
+
+
+
+echo "  Grafana"
 echo "  URL:  http://localhost:3535"
 echo "  PID do port-forward: $PF_GRAFANA_PID"
 echo ""
@@ -196,16 +171,10 @@ echo "  user: admin"
 echo "  senha:"
 echo "    kubectl get secret -n monitoring monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d"
 echo ""
-echo "📈 Prometheus (port-forward já ativo)"
+echo "  Prometheus"
 echo "  URL:  http://localhost:9090"
 echo "  PID do port-forward: $PF_PROM_PID"
 echo ""
-echo "🌐 Webserver (port-forward já ativo)"
+echo "  Webserver"
 echo "  URL:  http://localhost:8080"
 echo "  PID do port-forward: $PF_WEB_PID"
-echo ""
-echo "👉 Para encerrar os port-forwards, use:"
-echo "  kill $PF_GRAFANA_PID $PF_PROM_PID $PF_WEB_PID"
-echo ""
-echo "Todos os serviços rodando no cluster KIND + monitoramento ativo."
-echo "==========================================="
