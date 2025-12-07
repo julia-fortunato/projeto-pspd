@@ -1,137 +1,211 @@
-
-#!/usr/bin/env bash
+#!/bin/bash
 set -euo pipefail
 
-# ========================
-# 0) Criar cluster Minikube automaticamente
-# ========================
-echo "[deploy] verificando minikube..."
+#############################################
+# CONFIGURAÇÕES
+#############################################
 
-if ! command -v minikube &>/dev/null; then
-  echo "[deploy] ERRO: minikube não encontrado no PATH."
-  echo "Instale o Minikube antes de rodar o deploy."
-  exit 1
-fi
-
-# Configs opcionais
-MINIKUBE_CPUS=4
-MINIKUBE_MEM=3072
-MINIKUBE_DRIVER="docker"
-
-echo "[deploy] iniciando cluster Minikube..."
-minikube start --nodes=3 --driver="$MINIKUBE_DRIVER" --cpus="$MINIKUBE_CPUS" --memory="$MINIKUBE_MEM" || {
-  echo "[deploy] Falha ao iniciar o Minikube."
-  exit 1
-}
-
-# Certificar que o kubectl está apontando para o minikube
-echo "[deploy] configurando kubectl..."
-kubectl config use-context minikube
-
-echo "[deploy] cluster criado e operacional!"
-
-
-set -euo pipefail
-
-# ===== config mínima =====
+CLUSTER_NAME="meucluster"
+KIND_CONFIG="kind-multinode.yaml"
 NAMESPACE="default"
-SERVER_A_DIR="./serverA"   # grpc-quiz
-SERVER_B_DIR="./serverB"   # grpc-user
+
+SERVER_A_DIR="./serverA"
+SERVER_B_DIR="./serverB"
 WEBSERVER_DIR="./webserver"
+
 IMG_A="grpc-quiz:v1"
 IMG_B="grpc-user:v1"
 IMG_WEB="webserver:1.2"
 
 MANIFESTS=(
   "kubernetes/01-db-quiz-deployment.yaml"
-  "kubernetes/03-app-quiz-deployment.yaml"
   "kubernetes/02-db-user-deployment.yaml"
+  "kubernetes/03-app-quiz-deployment.yaml"
   "kubernetes/04-app-user-deployment.yaml"
   "kubernetes/webserver-app.yaml"
 )
 
 DEPLOYMENTS=(
   "postgres-quiz-deployment"
-  "grpc-quiz-deployment"
   "postgres-user-deployment"
+  "grpc-quiz-deployment"
   "grpc-user-deployment"
   "webserver-deployment"
 )
 
-echo "[deploy] checks básicos…"
-command -v minikube >/dev/null || { echo "minikube não encontrado"; exit 1; }
-command -v kubectl  >/dev/null || { echo "kubectl não encontrado"; exit 1; }
-command -v docker   >/dev/null || { echo "docker não encontrado"; exit 1; }
 
-# 1) start minikube se preciso
-if ! minikube status -p minikube --output json | grep -q '"Host": "Running"'; then
-  echo "[deploy] subindo minikube…"
-  minikube start --driver=docker
-else
-  echo "[deploy] minikube já está rodando."
-fi
+#############################################
+# 1) CRIAR CLUSTER KIND MULTINODE
+#############################################
 
-# 2) namespace
+echo "[KIND] Criando arquivo de cluster..."
+cat <<EOF > "$KIND_CONFIG"
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+nodes:
+  - role: control-plane
+  - role: worker
+  - role: worker
+EOF
+
+echo "[KIND] Resetando cluster anterior..."
+kind delete cluster --name "$CLUSTER_NAME" || true
+
+echo "[KIND] Criando novo cluster..."
+kind create cluster --name "$CLUSTER_NAME" --config "$KIND_CONFIG"
+
+
+#############################################
+# 2) ESPERAR CLUSTER FICAR PRONTO
+#############################################
+
+echo "[K8S] Aguardando nós prontos..."
+kubectl wait --for=condition=Ready node --all --timeout=120s
+
+
+#############################################
+# 2.1) REMOVER TAINT DO CONTROL-PLANE
+#   → deixa o nó de control-plane também receber pods
+#############################################
+
+echo "[K8S] Removendo taint do control-plane para permitir workloads..."
+
+# Remove taint padrão de control-plane (k8s recentes)
+kubectl taint nodes -l node-role.kubernetes.io/control-plane='' node-role.kubernetes.io/control-plane- || true
+
+# Remove taint antigo (master), se existir (clusters mais antigos)
+kubectl taint nodes -l node-role.kubernetes.io/master='' node-role.kubernetes.io/master- || true
+
+
+#############################################
+# 3) INSTALAR kube-prometheus-stack
+#############################################
+
+echo "[PROMETHEUS] Instalando monitoring stack..."
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null
+helm repo update >/dev/null
+
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  --namespace monitoring --create-namespace \
+  --set grafana.enabled=true \
+  --set prometheus.enabled=true \
+  --set alertmanager.enabled=true \
+  --wait
+
+echo "[PROMETHEUS] Aguardando componentes..."
+kubectl rollout status deploy/monitoring-grafana -n monitoring --timeout=180s
+kubectl rollout status deploy/monitoring-kube-prometheus-operator -n monitoring --timeout=180s
+kubectl rollout status statefulset/prometheus-monitoring-kube-prometheus-prometheus -n monitoring --timeout=180s
+
+
+#############################################
+# 4) PREPARAR NAMESPACE / CONFIGMAPS SQL
+#############################################
+
+echo "[APP] Criando namespace..."
 kubectl get ns "$NAMESPACE" >/dev/null 2>&1 || kubectl create namespace "$NAMESPACE"
 
-# 3) criar/atualizar ConfigMaps a partir das pastas locais BD/quiz e BD/user
-#    (cada arquivo .sql vira um arquivo dentro da CM; a ordem de execução é alfabética)
-if [ -d "BD/quiz" ]; then
-  echo "[deploy] atualizando ConfigMap quiz-sql-config com BD/quiz/*.sql …"
-  kubectl create configmap quiz-sql-config --from-file=BD/quiz/ -n "$NAMESPACE" -o yaml --dry-run=client | kubectl apply -f -
-else
-  echo "[deploy] (aviso) pasta BD/quiz não encontrada; init do quiz pode não ter SQLs."
-fi
+echo "[APP] Criando configmaps SQL..."
 
-if [ -d "BD/user" ]; then
-  echo "[deploy] atualizando ConfigMap user-sql-config com BD/user/*.sql …"
-  kubectl create configmap user-sql-config --from-file=BD/user/ -n "$NAMESPACE" -o yaml --dry-run=client | kubectl apply -f -
-else
-  echo "[deploy] (aviso) pasta BD/user não encontrada; init do user pode não ter SQLs."
-fi
+kubectl create configmap quiz-sql-config \
+  --from-file=BD/quiz/ -n "$NAMESPACE" \
+  -o yaml --dry-run=client | kubectl apply -f -
 
-# 4) usar daemon do minikube p/ build
-echo "[deploy] configurando docker-env do minikube…"
-eval "$(minikube -p minikube docker-env)"
+kubectl create configmap user-sql-config \
+  --from-file=BD/user/ -n "$NAMESPACE" \
+  -o yaml --dry-run=client | kubectl apply -f -
 
-# 5) build imagens
-echo "[deploy] build ${IMG_A}…"
-docker build -t "${IMG_A}" "${SERVER_A_DIR}"
-echo "[deploy] build ${IMG_B}…"
-docker build -t "${IMG_B}" "${SERVER_B_DIR}"
-echo "[deploy] build ${IMG_WEB}…"
-docker build -t "${IMG_WEB}" "${WEBSERVER_DIR}"
 
-# 6) aplicar manifests na ordem
+#############################################
+# 5) BUILD E LOAD DAS IMAGENS NO KIND
+#############################################
+
+echo "[DOCKER] Buildando imagens..."
+
+docker build -t "$IMG_A" "$SERVER_A_DIR"
+docker build -t "$IMG_B" "$SERVER_B_DIR"
+docker build -t "$IMG_WEB" "$WEBSERVER_DIR"
+
+echo "[KIND] Carregando imagens..."
+
+kind load docker-image "$IMG_A" --name "$CLUSTER_NAME"
+kind load docker-image "$IMG_B" --name "$CLUSTER_NAME"
+kind load docker-image "$IMG_WEB" --name "$CLUSTER_NAME"
+
+
+#############################################
+# 6) APLICAR MANIFESTOS
+#############################################
+
+echo "[KUBECTL] Aplicando manifests..."
+
 for f in "${MANIFESTS[@]}"; do
-  [ -f "$f" ] || { echo "[erro] manifesto não encontrado: $f"; exit 1; }
-  echo "[deploy] kubectl apply $f…"
-  kubectl apply -n "$NAMESPACE" -f "$f"
+  echo "[apply] $f"
+  kubectl apply -f "$f" -n "$NAMESPACE"
 done
 
-# 7) esperar rollouts
+
+#############################################
+# 7) ESPERAR ROLLOUT COMPLETAR
+#############################################
+
+echo "[KUBECTL] Esperando rollouts..."
+
 for d in "${DEPLOYMENTS[@]}"; do
-  echo "[deploy] aguardando rollout de $d…"
-  kubectl rollout status -n "$NAMESPACE" deployment/"$d" --timeout=180s
+  kubectl rollout status deployment/"$d" -n "$NAMESPACE" --timeout=180s
 done
 
-# 8) se as tabelas não existirem, forçar reinit (apenas se for emptyDir)
+
+#############################################
+# 8) PORT-FORWARD PARA ACESSO LOCAL
+#############################################
+
+echo "[PORT-FORWARD] Iniciando túneis locais para Grafana, Prometheus e Webserver..."
+
+# Grafana (localhost:3535 → svc porta 80)
+kubectl port-forward -n monitoring svc/monitoring-grafana 3535:80 >/dev/null 2>&1 &
+PF_GRAFANA_PID=$!
+
+# Prometheus
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090 >/dev/null 2>&1 &
+PF_PROM_PID=$!
+
+# Webserver (Service porta 6969 -> localhost:8080)
+kubectl port-forward -n "$NAMESPACE" svc/webserver-service 8080:6969 >/dev/null 2>&1 &
+PF_WEB_PID=$!
+
+# Dá um tempinho pros port-forwards subirem
+sleep 3
 
 
-if [ "$HAS_USUARIO" -ne 0 ] || [ "$HAS_QUIZ" -ne 0 ]; then
-  echo "[deploy] faltam tabelas (usuario:${HAS_USUARIO}, quiz:${HAS_QUIZ}). Deletando pods para reexecutar initdb.d…"
-  kubectl delete pod -n "$NAMESPACE" -l app=postgres-user --ignore-not-found
-  kubectl delete pod -n "$NAMESPACE" -l app=postgres-quiz --ignore-not-found
-  kubectl rollout status -n "$NAMESPACE" deployment/postgres-user-deployment --timeout=180s
-  kubectl rollout status -n "$NAMESPACE" deployment/postgres-quiz-deployment --timeout=180s
-fi
+#############################################
+# 9) RESULTADOS / ACESSOS
+#############################################
 
-# 9) mostrar serviços
-echo "[deploy] serviços:"
-kubectl get svc -n "$NAMESPACE"
-
-# 10) dica de teste rápido do webserver
-WEB_URL="$(minikube service webserver-service -n "$NAMESPACE" --url 2>/dev/null | head -n1)"
-[ -n "$WEB_URL" ] && echo "[deploy] webserver NodePort: $WEB_URL"
-
-echo "[deploy] pronto! 🚀"
+echo ""
+echo "==========================================="
+echo "🚀 SISTEMA TOTALMENTE DEPLOYADO!"
+echo "==========================================="
+echo ""
+echo "📊 Grafana (port-forward já ativo)"
+echo "  URL:  http://localhost:3535"
+echo "  PID do port-forward: $PF_GRAFANA_PID"
+echo ""
+echo "  user: admin"
+echo "  senha:"
+echo "    kubectl get secret -n monitoring monitoring-grafana -o jsonpath='{.data.admin-password}' | base64 -d"
+echo ""
+echo "📈 Prometheus (port-forward já ativo)"
+echo "  URL:  http://localhost:9090"
+echo "  PID do port-forward: $PF_PROM_PID"
+echo ""
+echo "🌐 Webserver (port-forward já ativo)"
+echo "  URL:  http://localhost:8080"
+echo "  PID do port-forward: $PF_WEB_PID"
+echo ""
+echo "👉 Para encerrar os port-forwards, use:"
+echo "  kill $PF_GRAFANA_PID $PF_PROM_PID $PF_WEB_PID"
+echo ""
+echo "Todos os serviços rodando no cluster KIND + monitoramento ativo."
+echo "==========================================="
